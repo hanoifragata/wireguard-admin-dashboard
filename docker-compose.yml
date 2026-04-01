@@ -1,0 +1,35 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: ${BACKEND_CONTAINER_NAME:?BACKEND_CONTAINER_NAME is required}
+    environment:
+      NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
+      HOST: ${BACKEND_HOST:?BACKEND_HOST is required}
+      PORT: ${BACKEND_PORT:?BACKEND_PORT is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+    volumes:
+      - wg_manager_data:/data
+    ports:
+      - "${BACKEND_BIND_IP:?BACKEND_BIND_IP is required}:${BACKEND_PORT:?BACKEND_PORT is required}:${BACKEND_PORT:?BACKEND_PORT is required}"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:?VITE_API_BASE_URL is required}
+    container_name: ${FRONTEND_CONTAINER_NAME:?FRONTEND_CONTAINER_NAME is required}
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_BIND_IP:?FRONTEND_BIND_IP is required}:${FRONTEND_PORT:?FRONTEND_PORT is required}:5173"
+    restart: unless-stopped
+
+volumes:
+  wg_manager_data:
