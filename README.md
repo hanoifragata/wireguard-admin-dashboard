@@ -34,6 +34,16 @@ wg-manager/
 └── README.md
 ```
 
+## Base de datos
+
+Este proyecto utiliza:
+
+- `SQLite` como base de datos
+- `Drizzle ORM` como ORM
+- `better-sqlite3` como driver
+
+En Docker, la base se almacena como archivo, por ejemplo en `/data/wg-manager.db`.
+
 ## Variables de entorno
 
 `docker-compose.yml` no incluye valores por defecto. Todos los valores requeridos deben existir en un archivo `.env` en la raíz del proyecto.
@@ -42,12 +52,6 @@ Primero copie el ejemplo:
 
 ```bash
 cp .env.example .env
-```
-
-En PowerShell:
-
-```powershell
-Copy-Item .env.example .env
 ```
 
 Después complete todas las variables en `.env`.
@@ -216,6 +220,23 @@ El seed es útil cuando todavía no hay acceso SSH real. Crea:
 ## Notas sobre el límite de peers
 
 WireGuard no expone un máximo fijo de peers por servidor. En este proyecto, `Peer limit` es una protección operativa configurable por servidor desde el dashboard. Si está definido, la aplicación bloquea la creación de más peers al alcanzar ese límite.
+
+## Subida a GitHub por SSH
+
+Si desea publicar el proyecto en un repositorio privado por SSH:
+
+1. Cree el repositorio vacío en GitHub.
+2. Configure el remoto:
+
+```bash
+git remote add origin git@github.com:SU_USUARIO/wireguard-admin-dashboard.git
+```
+
+3. Suba la rama principal:
+
+```bash
+git push -u origin main
+```
 
 ## Resumen de API
 
