@@ -17,6 +17,7 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
+COPY vite.config.ts ./
 
 ENV NODE_ENV=production
 EXPOSE 5173
