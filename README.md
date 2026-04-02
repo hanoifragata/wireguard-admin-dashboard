@@ -66,6 +66,7 @@ Después complete todas las variables en `.env`.
 - `FRONTEND_CONTAINER_NAME`
 - `FRONTEND_PORT`
 - `FRONTEND_BIND_IP`
+- `PREVIEW_ALLOWED_HOSTS`
 - `DATABASE_URL`
 - `CORS_ORIGIN`
 - `VITE_API_BASE_URL`
@@ -87,10 +88,11 @@ BACKEND_BIND_IP=127.0.0.1
 FRONTEND_CONTAINER_NAME=wg-manager-frontend
 FRONTEND_PORT=5173
 FRONTEND_BIND_IP=127.0.0.1
+PREVIEW_ALLOWED_HOSTS=wgmanager.treew.com,localhost,127.0.0.1
 
 DATABASE_URL=/data/wg-manager.db
-CORS_ORIGIN=http://localhost:5173
-VITE_API_BASE_URL=http://localhost:3001/api
+CORS_ORIGIN=https://wgmanager.treew.com
+VITE_API_BASE_URL=/api
 
 JWT_SECRET=reemplace-esto-por-un-secreto-largo
 ENCRYPTION_KEY=reemplace-esto-por-una-clave-estable-para-cifrado
@@ -101,6 +103,7 @@ ADMIN_PASSWORD=reemplace-esto-por-una-clave-segura
 Importante:
 
 - Mantenga `ENCRYPTION_KEY` estable después del primer uso. Si la cambia más adelante, las credenciales SSH y las configuraciones cliente guardadas previamente dejarán de poder descifrarse.
+- `PREVIEW_ALLOWED_HOSTS` controla qué dominios puede aceptar `vite preview` detrás de Nginx. Puede usar una lista separada por comas o `*` para permitir cualquier host.
 - El backend y el frontend están pensados para enlazarse a `127.0.0.1` y publicarse externamente a través de un reverse proxy como Nginx.
 
 ## Inicio rápido
@@ -135,6 +138,49 @@ Si falta una variable o está vacía, Compose fallará inmediatamente.
 10. Abra `Peers` para buscar globalmente, crear peers, editar alias/notas, descargar configuraciones guardadas y revocar peers.
 11. Abra `Users` para crear operadores y asignarles qué servidores VPN pueden gestionar.
 12. Abra `Audit` para revisar acciones y resultados.
+
+## Despliegue con Nginx
+
+Para un despliegue local o productivo detrás de Nginx:
+
+- configure `VITE_API_BASE_URL=/api`
+- configure `CORS_ORIGIN` con el dominio real del panel
+- configure `PREVIEW_ALLOWED_HOSTS` con el mismo dominio
+
+Ejemplo de bloque Nginx:
+
+```nginx
+server {
+    listen 80;
+    server_name wgmanager.treew.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:5173;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:3001/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Después de cambiar `.env`, reconstruya:
+
+```bash
+docker compose up --build -d
+```
 
 ## Estados de peers
 
