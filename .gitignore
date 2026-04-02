@@ -35,5 +35,6 @@ data/
 *.db
 *.db-shm
 *.db-wal
+*.rar
 
 docker-data/
