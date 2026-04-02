@@ -82,16 +82,16 @@ NODE_ENV=production
 
 BACKEND_CONTAINER_NAME=wg-manager-backend
 BACKEND_HOST=0.0.0.0
-BACKEND_PORT=3001
+BACKEND_PORT=3002
 BACKEND_BIND_IP=127.0.0.1
 
 FRONTEND_CONTAINER_NAME=wg-manager-frontend
 FRONTEND_PORT=5173
 FRONTEND_BIND_IP=127.0.0.1
-PREVIEW_ALLOWED_HOSTS=wgmanager.treew.com,localhost,127.0.0.1
+PREVIEW_ALLOWED_HOSTS=www.example.com,localhost,127.0.0.1
 
 DATABASE_URL=/data/wg-manager.db
-CORS_ORIGIN=https://wgmanager.treew.com
+CORS_ORIGIN=https://www.example.com
 VITE_API_BASE_URL=/api
 
 JWT_SECRET=reemplace-esto-por-un-secreto-largo
@@ -115,7 +115,7 @@ docker compose up --build
 Abra:
 
 - Frontend: `http://localhost:5173`
-- Health del backend: `http://localhost:3001/health`
+- Health del backend: `http://localhost:3002/health`
 
 Si falta una variable o está vacía, Compose fallará inmediatamente.
 
@@ -152,7 +152,7 @@ Ejemplo de bloque Nginx:
 ```nginx
 server {
     listen 80;
-    server_name wgmanager.treew.com;
+    server_name www.example.com;
 
     location / {
         proxy_pass http://127.0.0.1:5173;
@@ -166,7 +166,7 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:3001/api/;
+        proxy_pass http://127.0.0.1:3002/api/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
