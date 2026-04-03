@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ClipboardList, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ClipboardList, Filter } from 'lucide-react';
 import { auditApi, serversApi, type AuditLog, type Server } from '@/lib/api.js';
+import { Button } from '@/components/ui/button.js';
 import {
   Card,
   CardContent,
@@ -14,9 +15,11 @@ import { Select } from '@/components/ui/select.js';
 import { Badge } from '@/components/ui/badge.js';
 
 export function AuditPage() {
+  const pageSize = 25;
   const [serverId, setServerId] = useState('');
   const [result, setResult] = useState('');
   const [action, setAction] = useState('');
+  const [page, setPage] = useState(1);
 
   const serversQuery = useQuery({
     queryKey: ['servers'],
@@ -24,10 +27,11 @@ export function AuditPage() {
   });
 
   const auditQuery = useQuery({
-    queryKey: ['audit', serverId, result, action],
+    queryKey: ['audit', serverId, result, action, page],
     queryFn: () =>
       auditApi.list({
-        limit: 100,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
         serverId: serverId ? Number(serverId) : undefined,
         result: result === 'success' || result === 'fail' ? result : undefined,
         action: action || undefined,
@@ -35,6 +39,22 @@ export function AuditPage() {
   });
 
   const logs: AuditLog[] = auditQuery.data?.data ?? [];
+  const totalLogs = auditQuery.data?.meta.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalLogs / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = totalLogs === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageEnd = Math.min((currentPage - 1) * pageSize + logs.length, totalLogs);
+
+  useEffect(() => {
+    setPage(1);
+  }, [serverId, result, action]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   const totals = useMemo(
     () => ({
       success: logs.filter((log) => log.result === 'success').length,
@@ -91,7 +111,7 @@ export function AuditPage() {
                 </div>
                 <p className="text-sm text-zinc-400">Entries loaded</p>
                 <p className="text-2xl font-semibold text-zinc-100">
-                  {logs.length}
+                  {totalLogs}
                 </p>
               </CardContent>
             </Card>
@@ -187,6 +207,35 @@ export function AuditPage() {
                 )}
               </tbody>
             </table>
+          </div>
+          <div className="flex flex-col gap-3 border-t border-zinc-800 bg-zinc-900/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-zinc-400">
+              Showing <span className="text-zinc-100">{pageStart}-{pageEnd}</span> of{' '}
+              <span className="text-zinc-100">{totalLogs}</span> entries
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage === 1 || auditQuery.isFetching}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Prev
+              </Button>
+              <div className="min-w-24 text-center text-sm text-zinc-300">
+                {currentPage} / {totalPages}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages || auditQuery.isFetching}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </Card>
       </div>
