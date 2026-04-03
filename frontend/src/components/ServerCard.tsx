@@ -55,100 +55,104 @@ export function ServerCard({ server, canDeleteServer = false, onEdit }: ServerCa
   };
 
   return (
-    <Card className="w-full max-w-md border-zinc-800 bg-zinc-900/70 transition-colors hover:border-zinc-700">
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex flex-col gap-4">
-          <div className="flex items-start gap-3 min-w-0">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-950/80">
-              <ServerIcon className="h-5 w-5 text-zinc-300" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="truncate text-base font-semibold text-zinc-100">{server.name}</h3>
-                {testResult === true && (
-                  <Badge variant="success">
-                    <Wifi className="h-3 w-3 mr-1" />
-                    Reachable
-                  </Badge>
-                )}
-                {testResult === false && (
-                  <Badge variant="destructive">
-                    <WifiOff className="h-3 w-3 mr-1" />
-                    Unreachable
-                  </Badge>
-                )}
+    <Card className="w-full min-w-0 border-zinc-800 bg-zinc-900/70 transition-colors hover:border-zinc-700">
+      <CardContent className="p-3.5">
+        <div className="space-y-2.5">
+          <div className="flex items-start justify-between gap-2.5">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950/80">
+                <ServerIcon className="h-4 w-4 text-zinc-300" />
               </div>
-              <p className="mt-1 text-sm text-zinc-400">
-                {server.sshUser}@{server.host}:{server.port}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Badge variant="outline">{server.wgInterface}</Badge>
-                {server.endpointHost ? (
-                  <Badge variant="outline">
-                    Endpoint: {server.endpointHost}:{server.endpointPort ?? 51820}
-                  </Badge>
-                ) : null}
-                <Badge variant="outline">
-                  {server.executionMode === 'docker'
-                    ? `Docker: ${server.dockerContainer ?? 'container'}`
-                    : 'Host runtime'}
-                </Badge>
-                <Badge variant="outline">
-                  {server.authMethod === 'key' ? 'SSH Key' : 'Password'}
-                </Badge>
-                {server.peerLimit ? (
-                  <Badge variant="outline">Limit: {server.peerLimit} peers</Badge>
-                ) : null}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="truncate text-sm font-semibold text-zinc-100">{server.name}</h3>
+                  {testResult === true && (
+                    <Badge variant="success">
+                      <Wifi className="h-3 w-3 mr-1" />
+                      Reachable
+                    </Badge>
+                  )}
+                  {testResult === false && (
+                    <Badge variant="destructive">
+                      <WifiOff className="h-3 w-3 mr-1" />
+                      Unreachable
+                    </Badge>
+                  )}
+                </div>
+                <p className="mt-0.5 text-sm leading-5 text-zinc-400">
+                  {server.sshUser}@{server.host}:{server.port}
+                </p>
               </div>
-              {server.description && (
-                <p className="mt-3 line-clamp-2 text-sm text-zinc-500">{server.description}</p>
-              )}
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-center px-3"
-              isLoading={testMutation.isPending}
-              onClick={() => testMutation.mutate()}
-              title="Test SSH connection"
-            >
-              <TestTube2 className="h-3.5 w-3.5" />
-              Test
-            </Button>
-            <Link to="/peers" search={{ serverId: String(server.id) }}>
-              <Button variant="ghost" size="sm" className="justify-center px-3" title="View peers">
-                <Users className="h-4 w-4" />
-                Peers
-              </Button>
-            </Link>
-            {onEdit ? (
+            <div className="flex shrink-0 items-center gap-0.5">
               <Button
                 variant="ghost"
                 size="sm"
-                className="justify-center px-3"
-                onClick={() => onEdit(server)}
-                title="Edit server"
+                className="h-7 px-2 text-zinc-300"
+                isLoading={testMutation.isPending}
+                onClick={() => testMutation.mutate()}
+                title="Test SSH connection"
               >
-                <Pencil className="h-4 w-4" />
-                Edit
+                <TestTube2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Test</span>
               </Button>
+              <Link to="/peers" search={{ serverId: String(server.id) }}>
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-zinc-300" title="View peers">
+                  <Users className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Peers</span>
+                </Button>
+              </Link>
+              {onEdit ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-zinc-300"
+                  onClick={() => onEdit(server)}
+                  title="Edit server"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Edit</span>
+                </Button>
+              ) : null}
+              {canDeleteServer ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-red-400"
+                  onClick={handleDelete}
+                  isLoading={deleteMutation.isPending}
+                  title="Delete server"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            <Badge variant="outline">{server.wgInterface}</Badge>
+            {server.endpointHost ? (
+              <Badge variant="outline">
+                Endpoint: {server.endpointHost}:{server.endpointPort ?? 51820}
+              </Badge>
             ) : null}
-            {canDeleteServer ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="ml-auto"
-                onClick={handleDelete}
-                isLoading={deleteMutation.isPending}
-                title="Delete server"
-              >
-                <Trash2 className="h-4 w-4 text-red-400" />
-              </Button>
+            <Badge variant="outline">
+              {server.executionMode === 'docker'
+                ? `Docker: ${server.dockerContainer ?? 'container'}`
+                : 'Host runtime'}
+            </Badge>
+            <Badge variant="outline">
+              {server.authMethod === 'key' ? 'SSH Key' : 'Password'}
+            </Badge>
+            {server.peerLimit ? (
+              <Badge variant="outline">Limit: {server.peerLimit} peers</Badge>
             ) : null}
           </div>
+
+          {server.description ? (
+            <p className="line-clamp-2 text-sm leading-5 text-zinc-500">{server.description}</p>
+          ) : null}
         </div>
       </CardContent>
     </Card>
