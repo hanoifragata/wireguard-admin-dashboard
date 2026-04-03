@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Server as ServerIcon, Wifi, WifiOff, Trash2, TestTube2, Users } from 'lucide-react';
+import { Server as ServerIcon, Wifi, WifiOff, Trash2, TestTube2, Users, Pencil } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { Card, CardContent } from './ui/card.js';
 import { Button } from './ui/button.js';
@@ -15,9 +15,10 @@ import {
 interface ServerCardProps {
   server: Server;
   canDeleteServer?: boolean;
+  onEdit?: (server: Server) => void;
 }
 
-export function ServerCard({ server, canDeleteServer = false }: ServerCardProps) {
+export function ServerCard({ server, canDeleteServer = false, onEdit }: ServerCardProps) {
   const queryClient = useQueryClient();
   const [testResult, setTestResult] = useState<boolean | null>(null);
 
@@ -54,17 +55,16 @@ export function ServerCard({ server, canDeleteServer = false }: ServerCardProps)
   };
 
   return (
-    <Card className="hover:border-zinc-700 transition-colors">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-4">
-          {/* Icon + info */}
-          <div className="flex items-start gap-4 min-w-0">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-800">
-              <ServerIcon className="h-5 w-5 text-zinc-400" />
+    <Card className="w-full max-w-md border-zinc-800 bg-zinc-900/70 transition-colors hover:border-zinc-700">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-950/80">
+              <ServerIcon className="h-5 w-5 text-zinc-300" />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-medium text-zinc-100 truncate">{server.name}</h3>
+                <h3 className="truncate text-base font-semibold text-zinc-100">{server.name}</h3>
                 {testResult === true && (
                   <Badge variant="success">
                     <Wifi className="h-3 w-3 mr-1" />
@@ -78,10 +78,10 @@ export function ServerCard({ server, canDeleteServer = false }: ServerCardProps)
                   </Badge>
                 )}
               </div>
-              <p className="text-sm text-zinc-400 mt-0.5">
+              <p className="mt-1 text-sm text-zinc-400">
                 {server.sshUser}@{server.host}:{server.port}
               </p>
-              <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <Badge variant="outline">{server.wgInterface}</Badge>
                 {server.endpointHost ? (
                   <Badge variant="outline">
@@ -101,16 +101,16 @@ export function ServerCard({ server, canDeleteServer = false }: ServerCardProps)
                 ) : null}
               </div>
               {server.description && (
-                <p className="text-xs text-zinc-500 mt-2">{server.description}</p>
+                <p className="mt-3 line-clamp-2 text-sm text-zinc-500">{server.description}</p>
               )}
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-3">
             <Button
               variant="outline"
               size="sm"
+              className="justify-center px-3"
               isLoading={testMutation.isPending}
               onClick={() => testMutation.mutate()}
               title="Test SSH connection"
@@ -119,15 +119,28 @@ export function ServerCard({ server, canDeleteServer = false }: ServerCardProps)
               Test
             </Button>
             <Link to="/peers" search={{ serverId: String(server.id) }}>
-              <Button variant="ghost" size="sm" title="View peers">
+              <Button variant="ghost" size="sm" className="justify-center px-3" title="View peers">
                 <Users className="h-4 w-4" />
                 Peers
               </Button>
             </Link>
+            {onEdit ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="justify-center px-3"
+                onClick={() => onEdit(server)}
+                title="Edit server"
+              >
+                <Pencil className="h-4 w-4" />
+                Edit
+              </Button>
+            ) : null}
             {canDeleteServer ? (
               <Button
                 variant="ghost"
                 size="icon"
+                className="ml-auto"
                 onClick={handleDelete}
                 isLoading={deleteMutation.isPending}
                 title="Delete server"

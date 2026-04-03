@@ -34,6 +34,7 @@ import { Textarea } from '@/components/ui/textarea.js';
 import {
   serversApi,
   type ConnectionTestResult,
+  type CreateServerInput,
   type Server,
 } from '@/lib/api.js';
 import { useAuthStore } from '@/store/auth.store.js';
@@ -75,42 +76,155 @@ const initialFormState: ServerFormState = {
   description: '',
 };
 
+function mapServerToForm(server: Server): ServerFormState {
+  return {
+    name: server.name,
+    host: server.host,
+    port: String(server.port),
+    endpointHost: server.endpointHost ?? '',
+    endpointPort: server.endpointPort ? String(server.endpointPort) : '51820',
+    peerLimit: server.peerLimit ? String(server.peerLimit) : '',
+    sshUser: server.sshUser,
+    authMethod: server.authMethod,
+    executionMode: server.executionMode,
+    dockerContainer: server.dockerContainer ?? '',
+    sshKey: '',
+    sshPassword: '',
+    wgInterface: server.wgInterface,
+    description: server.description ?? '',
+  };
+}
+
 export function ServersPage() {
   const role = useAuthStore((state) => state.role);
   const canManageServers = role === 'admin';
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [form, setForm] = useState<ServerFormState>(initialFormState);
+  const [editingServer, setEditingServer] = useState<Server | null>(null);
 
   const serversQuery = useQuery({
     queryKey: ['servers'],
     queryFn: (): Promise<Server[]> => serversApi.list(),
   });
 
-  const createMutation = useMutation({
-    mutationFn: (): Promise<Server> =>
-      serversApi.create({
-        name: form.name,
-        host: form.host,
-        port: Number(form.port),
-        endpointHost: form.endpointHost || undefined,
-        endpointPort: form.endpointPort ? Number(form.endpointPort) : undefined,
-        peerLimit: form.peerLimit ? Number(form.peerLimit) : undefined,
-        sshUser: form.sshUser,
-        authMethod: form.authMethod,
-        executionMode: form.executionMode,
+  const resetDialog = () => {
+    setIsDialogOpen(false);
+    setEditingServer(null);
+    setForm(initialFormState);
+  };
+
+  const openCreateDialog = () => {
+    setEditingServer(null);
+    setForm(initialFormState);
+    setIsDialogOpen(true);
+  };
+
+  const openEditDialog = (server: Server) => {
+    setEditingServer(server);
+    setForm(mapServerToForm(server));
+    setIsDialogOpen(true);
+  };
+
+  const buildServerPayload = (
+    currentForm: ServerFormState,
+    mode: 'create' | 'edit',
+    existingServer?: Server
+  ): CreateServerInput | Partial<CreateServerInput> | null => {
+    const authMethod = currentForm.authMethod;
+    const executionMode = currentForm.executionMode;
+
+    if (executionMode === 'docker' && !currentForm.dockerContainer.trim()) {
+      toast.error('Docker container is required for docker execution mode');
+      return null;
+    }
+
+    if (mode === 'create') {
+      if (authMethod === 'key' && !currentForm.sshKey.trim()) {
+        toast.error('SSH key required for key authentication');
+        return null;
+      }
+
+      if (authMethod === 'password' && !currentForm.sshPassword.trim()) {
+        toast.error('SSH password required for password authentication');
+        return null;
+      }
+
+      return {
+        name: currentForm.name.trim(),
+        host: currentForm.host.trim(),
+        port: Number(currentForm.port),
+        endpointHost: currentForm.endpointHost.trim() || undefined,
+        endpointPort: currentForm.endpointPort ? Number(currentForm.endpointPort) : undefined,
+        peerLimit: currentForm.peerLimit ? Number(currentForm.peerLimit) : undefined,
+        sshUser: currentForm.sshUser.trim(),
+        authMethod,
+        executionMode,
         dockerContainer:
-          form.executionMode === 'docker' ? form.dockerContainer : undefined,
-        sshKey: form.authMethod === 'key' ? form.sshKey : undefined,
-        sshPassword: form.authMethod === 'password' ? form.sshPassword : undefined,
-        wgInterface: form.wgInterface,
-        description: form.description || undefined,
-      }),
+          executionMode === 'docker' ? currentForm.dockerContainer.trim() : undefined,
+        sshKey: authMethod === 'key' ? currentForm.sshKey : undefined,
+        sshPassword: authMethod === 'password' ? currentForm.sshPassword : undefined,
+        wgInterface: currentForm.wgInterface.trim(),
+        description: currentForm.description.trim() || undefined,
+      };
+    }
+
+    if (!existingServer) return null;
+
+    if (authMethod === 'key' && !existingServer.hasKey && !currentForm.sshKey.trim()) {
+      toast.error('Add an SSH key before switching this server to key authentication');
+      return null;
+    }
+
+    if (
+      authMethod === 'password' &&
+      !existingServer.hasPassword &&
+      !currentForm.sshPassword.trim()
+    ) {
+      toast.error('Add an SSH password before switching this server to password authentication');
+      return null;
+    }
+
+    const payload: Partial<CreateServerInput> = {
+      name: currentForm.name.trim(),
+      host: currentForm.host.trim(),
+      port: Number(currentForm.port),
+      endpointHost: currentForm.endpointHost.trim() || undefined,
+      endpointPort: currentForm.endpointPort ? Number(currentForm.endpointPort) : undefined,
+      peerLimit: currentForm.peerLimit ? Number(currentForm.peerLimit) : undefined,
+      sshUser: currentForm.sshUser.trim(),
+      authMethod,
+      executionMode,
+      dockerContainer:
+        executionMode === 'docker' ? currentForm.dockerContainer.trim() : undefined,
+      wgInterface: currentForm.wgInterface.trim(),
+      description: currentForm.description.trim() || undefined,
+    };
+
+    if (currentForm.sshKey.trim()) {
+      payload.sshKey = currentForm.sshKey;
+    }
+
+    if (currentForm.sshPassword.trim()) {
+      payload.sshPassword = currentForm.sshPassword;
+    }
+
+    return payload;
+  };
+
+  const createMutation = useMutation({
+    mutationFn: async (): Promise<Server> => {
+      const payload = buildServerPayload(form, 'create');
+      if (!payload) {
+        throw new Error('Missing required server fields');
+      }
+
+      return serversApi.create(payload as CreateServerInput);
+    },
     onSuccess: (createdServer: Server) => {
       queryClient.invalidateQueries({ queryKey: ['servers'] });
       queryClient.invalidateQueries({ queryKey: ['peers'] });
-      setIsDialogOpen(false);
-      setForm(initialFormState);
+      resetDialog();
       toast.success(
         createdServer.warning ?? `Server "${createdServer.name}" registered`
       );
@@ -118,6 +232,32 @@ export function ServersPage() {
     onError: (error) => {
       toast.error(
         error instanceof Error ? error.message : 'Server registration failed'
+      );
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (): Promise<Server> => {
+      if (!editingServer) {
+        throw new Error('No server selected for editing');
+      }
+
+      const payload = buildServerPayload(form, 'edit', editingServer);
+      if (!payload) {
+        throw new Error('Missing required server fields');
+      }
+
+      return serversApi.update(editingServer.id, payload);
+    },
+    onSuccess: (updatedServer: Server) => {
+      queryClient.invalidateQueries({ queryKey: ['servers'] });
+      queryClient.invalidateQueries({ queryKey: ['peers'] });
+      resetDialog();
+      toast.success(`Server "${updatedServer.name}" updated`);
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof Error ? error.message : 'Server update failed'
       );
     },
   });
@@ -152,6 +292,8 @@ export function ServersPage() {
   });
 
   const serverCount = serversQuery.data?.length ?? 0;
+  const isEditing = editingServer !== null;
+  const activeMutation = isEditing ? updateMutation : createMutation;
 
   return (
     <div className="min-h-full bg-zinc-950 px-6 py-8">
@@ -167,7 +309,7 @@ export function ServersPage() {
             </CardHeader>
             <CardContent className="flex flex-wrap items-center gap-3">
               {canManageServers ? (
-                <Button onClick={() => setIsDialogOpen(true)}>
+                <Button onClick={openCreateDialog}>
                   <Plus className="h-4 w-4" />
                   Add server
                 </Button>
@@ -256,19 +398,20 @@ export function ServersPage() {
                   </p>
                 </div>
                 {canManageServers ? (
-                  <Button onClick={() => setIsDialogOpen(true)}>
+                  <Button onClick={openCreateDialog}>
                     Register server
                   </Button>
                 ) : null}
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className="grid gap-4 justify-items-start xl:grid-cols-2">
               {serversQuery.data?.map((server: Server) => (
                 <ServerCard
                   key={server.id}
                   server={server}
                   canDeleteServer={canManageServers}
+                  onEdit={canManageServers ? openEditDialog : undefined}
                 />
               ))}
             </div>
@@ -276,13 +419,26 @@ export function ServersPage() {
         </section>
       </div>
 
-      <Dialog open={canManageServers && isDialogOpen} onOpenChange={setIsDialogOpen}>
+      <Dialog
+        open={canManageServers && isDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            resetDialog();
+            return;
+          }
+
+          setIsDialogOpen(true);
+        }}
+      >
         <DialogContent className="max-w-3xl">
-          <DialogHeader onClose={() => setIsDialogOpen(false)}>
-            <DialogTitle>Add WireGuard server</DialogTitle>
+          <DialogHeader onClose={resetDialog}>
+            <DialogTitle>
+              {isEditing ? 'Edit WireGuard server' : 'Add WireGuard server'}
+            </DialogTitle>
             <DialogDescription>
-              Credentials are encrypted before storage. The server must pass an
-              SSH check before it is saved.
+              {isEditing
+                ? 'Update the saved server details. Leave SSH credentials blank to keep the existing secret unchanged.'
+                : 'Credentials are encrypted before storage. The server must pass an SSH check before it is saved.'}
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="grid gap-5 md:grid-cols-2">
@@ -428,7 +584,7 @@ export function ServersPage() {
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="sshPassword" className="flex items-center gap-2">
                   <Lock className="h-4 w-4" />
-                  SSH password
+                  {isEditing ? 'Replace SSH password' : 'SSH password'}
                 </Label>
                 <Input
                   id="sshPassword"
@@ -440,13 +596,14 @@ export function ServersPage() {
                       sshPassword: event.target.value,
                     }))
                   }
+                  placeholder={isEditing ? 'Leave blank to keep current password' : undefined}
                 />
               </div>
             ) : (
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="sshKey" className="flex items-center gap-2">
                   <KeyRound className="h-4 w-4" />
-                  Private key (`id_rsa`)
+                  {isEditing ? 'Replace private key (`id_rsa`)' : 'Private key (`id_rsa`)'}
                 </Label>
                 <Textarea
                   id="sshKey"
@@ -455,7 +612,11 @@ export function ServersPage() {
                   onChange={(event) =>
                     setForm((prev) => ({ ...prev, sshKey: event.target.value }))
                   }
-                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  placeholder={
+                    isEditing
+                      ? 'Leave blank to keep current private key'
+                      : '-----BEGIN OPENSSH PRIVATE KEY-----'
+                  }
                 />
               </div>
             )}
@@ -480,21 +641,27 @@ export function ServersPage() {
               variant="outline"
               onClick={() => testMutation.mutate()}
               isLoading={testMutation.isPending}
+              disabled={isEditing}
+              title={
+                isEditing
+                  ? 'Use the Test button on the server card to verify the current saved connection'
+                  : undefined
+              }
             >
               Test connection
             </Button>
             <Button
               variant="ghost"
-              onClick={() => setIsDialogOpen(false)}
-              disabled={createMutation.isPending}
+              onClick={resetDialog}
+              disabled={activeMutation.isPending}
             >
               Cancel
             </Button>
             <Button
-              onClick={() => createMutation.mutate()}
-              isLoading={createMutation.isPending}
+              onClick={() => activeMutation.mutate()}
+              isLoading={activeMutation.isPending}
             >
-              Save server
+              {isEditing ? 'Save changes' : 'Save server'}
             </Button>
           </DialogFooter>
         </DialogContent>
