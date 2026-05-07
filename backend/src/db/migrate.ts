@@ -63,6 +63,7 @@ function runInlineDDL(): void {
       alias TEXT,
       username TEXT,
       client_config TEXT,
+      remote_config_path TEXT,
       notes TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -110,6 +111,7 @@ function runInlineDDL(): void {
   ensureColumn('servers', 'endpoint_port', 'INTEGER');
   ensureColumn('servers', 'peer_limit', 'INTEGER');
   ensureColumn('peers', 'client_config', 'TEXT');
+  ensureColumn('peers', 'remote_config_path', 'TEXT');
   console.log('[DB] Inline DDL applied');
 }
 

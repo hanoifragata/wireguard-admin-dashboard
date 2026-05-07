@@ -2,6 +2,7 @@
  * WireGuard management service.
  * Parses `wg show` output and executes peer revocation over SSH.
  */
+import { createHash } from 'crypto';
 import { execRemote } from './ssh.service.js';
 import { auditService } from './audit.service.js';
 import type { Server } from '../db/schema.js';
@@ -40,6 +41,7 @@ export interface RevocationResult {
 
 export interface CreatePeerInput {
   allowedIps: string;
+  alias?: string;
   persistentKeepalive?: number;
 }
 
@@ -50,10 +52,53 @@ export interface CreatePeerResult {
   allowedIps: string;
   persistentKeepalive: number;
   clientConfig: string;
+  remoteConfigPath: string;
 }
+
+const HOST_PEER_CONFIG_ROOT = '/etc/wireguard/peers';
+const DOCKER_PEER_CONFIG_ROOT = '/config';
 
 function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function slugifyPeerLabel(value: string | undefined): string {
+  const slug = (value ?? 'peer')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+
+  return slug || 'peer';
+}
+
+function peerFingerprint(publicKey: string): string {
+  return createHash('sha256').update(publicKey).digest('hex').slice(0, 12);
+}
+
+function buildPeerFolderName(publicKey: string, alias?: string): string {
+  return `peer_${slugifyPeerLabel(alias)}-${peerFingerprint(publicKey)}`;
+}
+
+function getPeerConfigRoot(server: Server): string {
+  return server.executionMode === 'docker'
+    ? DOCKER_PEER_CONFIG_ROOT
+    : HOST_PEER_CONFIG_ROOT;
+}
+
+function buildPeerConfigPath(server: Server, publicKey: string, alias?: string): string {
+  return `${getPeerConfigRoot(server)}/${buildPeerFolderName(publicKey, alias)}`;
+}
+
+function isManagedPeerConfigPath(server: Server, remoteConfigPath: string): boolean {
+  const root = getPeerConfigRoot(server);
+  return (
+    remoteConfigPath.startsWith(`${root}/peer_`) &&
+    !remoteConfigPath.includes('\n') &&
+    !remoteConfigPath.includes('\r') &&
+    !remoteConfigPath.includes('..')
+  );
 }
 
 /**
@@ -144,6 +189,108 @@ export async function getLivePeers(server: Server): Promise<WgPeer[]> {
   }
 
   return parseWgDump(stdout);
+}
+
+async function writePeerConfigDirectory(
+  server: Server,
+  publicKey: string,
+  clientConfig: string,
+  alias?: string
+): Promise<string> {
+  const remoteConfigPath = buildPeerConfigPath(server, publicKey, alias);
+  const folderName = remoteConfigPath.split('/').at(-1);
+  if (!folderName || !isManagedPeerConfigPath(server, remoteConfigPath)) {
+    throw new Error('Refusing to write peer config outside the managed directory');
+  }
+
+  const configPath = `${remoteConfigPath}/${folderName}.conf`;
+  const qrPath = `${remoteConfigPath}/${folderName}.png`;
+  const configBase64 = Buffer.from(clientConfig, 'utf8').toString('base64');
+
+  const command = [
+    'set -e',
+    `dir=${shellEscape(remoteConfigPath)}`,
+    `conf=${shellEscape(configPath)}`,
+    `qr=${shellEscape(qrPath)}`,
+    'umask 077',
+    'mkdir -p "$dir"',
+    `printf %s ${shellEscape(configBase64)} | base64 -d > "$conf"`,
+    'chmod 700 "$dir"',
+    'chmod 600 "$conf"',
+    'if command -v qrencode >/dev/null 2>&1; then qrencode -o "$qr" < "$conf" || rm -f "$qr"; fi',
+  ].join('; ');
+
+  const result = await execRemote(server, buildWireGuardCommand(server, command));
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to create peer config directory: ${result.stderr || 'unknown error'}`
+    );
+  }
+
+  return remoteConfigPath;
+}
+
+async function removePeerConfigDirectory(
+  server: Server,
+  remoteConfigPath: string
+): Promise<void> {
+  if (!isManagedPeerConfigPath(server, remoteConfigPath)) {
+    throw new Error('Refusing to remove peer config outside the managed directory');
+  }
+
+  const command = [
+    'set -e',
+    `dir=${shellEscape(remoteConfigPath)}`,
+    'if [ -d "$dir" ]; then rm -rf "$dir"; fi',
+    'if [ -e "$dir" ]; then echo "managed peer directory still exists" >&2; exit 1; fi',
+  ].join('; ');
+
+  const result = await execRemote(server, buildWireGuardCommand(server, command));
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to remove peer config directory: ${result.stderr || 'unknown error'}`
+    );
+  }
+}
+
+async function rollbackCreatedPeer(
+  server: Server,
+  publicKey: string,
+  remoteConfigPath: string
+): Promise<string | null> {
+  const iface = server.wgInterface;
+  const errors: string[] = [];
+
+  try {
+    await removePeerConfigDirectory(server, remoteConfigPath);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+
+  try {
+    const removeResult = await execRemote(
+      server,
+      buildWireGuardCommand(
+        server,
+        `wg set ${shellEscape(iface)} peer ${shellEscape(publicKey)} remove`
+      )
+    );
+    if (removeResult.exitCode !== 0) {
+      errors.push(removeResult.stderr || 'wg set remove failed during rollback');
+    }
+
+    const saveResult = await execRemote(
+      server,
+      buildWireGuardCommand(server, `wg-quick save ${shellEscape(iface)}`)
+    );
+    if (saveResult.exitCode !== 0) {
+      errors.push(saveResult.stderr || 'wg-quick save failed during rollback');
+    }
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+
+  return errors.length > 0 ? errors.join('; ') : null;
 }
 
 /**
@@ -240,6 +387,19 @@ AllowedIPs = 0.0.0.0/0
 Endpoint = ${endpointHost}:${serverPort}
 PersistentKeepalive = ${keepalive}`;
 
+  const remoteConfigPath = buildPeerConfigPath(server, publicKey, input.alias);
+  try {
+    await writePeerConfigDirectory(server, publicKey, clientConfig, input.alias);
+  } catch (error) {
+    const rollbackError = await rollbackCreatedPeer(server, publicKey, remoteConfigPath);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      rollbackError
+        ? `${errorMessage}. Rollback also failed: ${rollbackError}`
+        : errorMessage
+    );
+  }
+
   return {
     publicKey,
     privateKey,
@@ -247,6 +407,7 @@ PersistentKeepalive = ${keepalive}`;
     allowedIps: input.allowedIps,
     persistentKeepalive: keepalive,
     clientConfig,
+    remoteConfigPath,
   };
 }
 
@@ -268,7 +429,8 @@ export async function revokePeer(
   server: Server,
   publicKey: string,
   performedBy: string,
-  peerAlias?: string
+  peerAlias?: string,
+  remoteConfigPath?: string
 ): Promise<RevocationResult> {
   const iface = server.wgInterface;
   const result: RevocationResult = {
@@ -317,6 +479,11 @@ export async function revokePeer(
       throw new Error('Peer still present after removal — verification failed');
     }
 
+    await removePeerConfigDirectory(
+      server,
+      remoteConfigPath ?? buildPeerConfigPath(server, publicKey, peerAlias)
+    );
+
     result.success = true;
 
     await auditService.log({
@@ -350,7 +517,12 @@ export async function revokePeer(
  * Operations are executed in parallel per-server, sequentially within each server.
  */
 export async function bulkRevoke(
-  targets: Array<{ server: Server; publicKey: string; alias?: string }>,
+  targets: Array<{
+    server: Server;
+    publicKey: string;
+    alias?: string;
+    remoteConfigPath?: string;
+  }>,
   performedBy: string
 ): Promise<RevocationResult[]> {
   // Group targets by server
@@ -370,7 +542,8 @@ export async function bulkRevoke(
           target.server,
           target.publicKey,
           performedBy,
-          target.alias
+          target.alias,
+          target.remoteConfigPath
         );
         serverResults.push(r);
       }

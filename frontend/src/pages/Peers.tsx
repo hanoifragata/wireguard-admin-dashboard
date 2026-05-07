@@ -1,11 +1,15 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@tanstack/react-router';
+import QRCode from 'qrcode';
 import {
   ChevronLeft,
   ChevronRight,
+  Copy,
+  Download,
   LoaderCircle,
   Plus,
+  QrCode,
   RefreshCw,
   Search,
   ShieldOff,
@@ -40,6 +44,67 @@ import { peersApi, serversApi, type CreatePeerResponse, type GlobalPeer, type Se
 
 function getPeerKey(peer: GlobalPeer): string {
   return `${peer.serverId}:${peer.publicKey}`;
+}
+
+interface ConfigPreview {
+  title: string;
+  filename: string;
+  publicKey: string;
+  config: string;
+  qrDataUrl: string | null;
+}
+
+function getConfigFilename(alias: string | null | undefined): string {
+  const safeAlias = (alias?.trim() || 'wireguard-peer').replace(/[^a-zA-Z0-9._-]+/g, '-');
+  return `${safeAlias}.conf`;
+}
+
+function getQrFilename(filename: string): string {
+  return filename.replace(/\.conf$/i, '.png');
+}
+
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadDataUrl(filename: string, dataUrl: string) {
+  const anchor = document.createElement('a');
+  anchor.href = dataUrl;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+async function buildConfigPreview(input: {
+  title: string;
+  filename: string;
+  publicKey: string;
+  config: string;
+}): Promise<ConfigPreview> {
+  try {
+    const qrDataUrl = await QRCode.toDataURL(input.config, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      width: 320,
+      color: {
+        dark: '#18181b',
+        light: '#ffffff',
+      },
+    });
+
+    return { ...input, qrDataUrl };
+  } catch {
+    return { ...input, qrDataUrl: null };
+  }
 }
 
 function parseIpv4(value: string): number | null {
@@ -125,7 +190,7 @@ export function PeersPage() {
   const [createServerId, setCreateServerId] = useState(search.serverId ?? '');
   const [createAlias, setCreateAlias] = useState('');
   const [createNotes, setCreateNotes] = useState('');
-  const [createdConfig, setCreatedConfig] = useState<string | null>(null);
+  const [configPreview, setConfigPreview] = useState<ConfigPreview | null>(null);
   const [alias, setAlias] = useState('');
   const [notes, setNotes] = useState('');
   const deferredAliasFilter = useDeferredValue(aliasFilter);
@@ -210,14 +275,23 @@ export function PeersPage() {
         notes: createNotes || undefined,
         persistentKeepalive: 25,
       }),
-    onSuccess: (response) => {
+    onSuccess: async (response) => {
       queryClient.invalidateQueries({ queryKey: ['peers'] });
       queryClient.invalidateQueries({ queryKey: ['audit'] });
-      setCreatedConfig(response.config);
+      const preview = await buildConfigPreview({
+        title: 'Peer created',
+        filename: getConfigFilename(response.peer.alias),
+        publicKey: response.peer.publicKey,
+        config: response.config,
+      });
+      setConfigPreview(preview);
       setIsCreateOpen(false);
       setCreateAlias('');
       setCreateNotes('');
       toast.success('Peer created successfully');
+      if (!preview.qrDataUrl) {
+        toast.error('QR generation failed');
+      }
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Peer creation failed');
@@ -227,19 +301,30 @@ export function PeersPage() {
   const downloadConfigMutation = useMutation({
     mutationFn: (peer: GlobalPeer) => peersApi.downloadConfig(peer.id),
     onSuccess: (download) => {
-      const blob = new Blob([download.config], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = download.filename;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      downloadTextFile(download.filename, download.config);
       toast.success('Peer config downloaded');
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Config download failed');
+    },
+  });
+
+  const showQrMutation = useMutation({
+    mutationFn: (peer: GlobalPeer) => peersApi.downloadConfig(peer.id),
+    onSuccess: async (download) => {
+      const preview = await buildConfigPreview({
+        title: 'Peer QR',
+        filename: download.filename,
+        publicKey: download.publicKey,
+        config: download.config,
+      });
+      setConfigPreview(preview);
+      if (!preview.qrDataUrl) {
+        toast.error('QR generation failed');
+      }
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'QR unavailable');
     },
   });
 
@@ -314,7 +399,7 @@ export function PeersPage() {
     setCreateServerId(serverFilter || (serversQuery.data?.[0] ? String(serversQuery.data[0].id) : ''));
     setCreateAlias('');
     setCreateNotes('');
-    setCreatedConfig(null);
+    setConfigPreview(null);
     setIsCreateOpen(true);
   };
 
@@ -561,6 +646,7 @@ export function PeersPage() {
             onToggleAll={handleToggleAll}
             onEditPeer={openEditModal}
             onDownloadPeer={(peer) => downloadConfigMutation.mutate(peer)}
+            onShowPeerQr={(peer) => showQrMutation.mutate(peer)}
             onRevokePeer={(peer) => {
               setSelectedKeys(new Set([getPeerKey(peer)]));
               setIsRevokeOpen(true);
@@ -717,28 +803,80 @@ export function PeersPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={createdConfig !== null} onOpenChange={(open) => !open && setCreatedConfig(null)}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader onClose={() => setCreatedConfig(null)}>
-            <DialogTitle>Peer created</DialogTitle>
+      <Dialog open={configPreview !== null} onOpenChange={(open) => !open && setConfigPreview(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader onClose={() => setConfigPreview(null)}>
+            <DialogTitle>{configPreview?.title ?? 'Peer config'}</DialogTitle>
             <DialogDescription>
               This client configuration was saved securely and can be downloaded again later for peers created from this dashboard.
             </DialogDescription>
           </DialogHeader>
-          <DialogBody className="space-y-4">
-            <Textarea rows={14} value={createdConfig ?? ''} readOnly className="font-mono text-xs" />
+          <DialogBody className="grid gap-4 lg:grid-cols-[320px,1fr]">
+            <div className="space-y-3">
+              <div className="flex h-80 items-center justify-center rounded-lg border border-zinc-800 bg-white p-4">
+                {configPreview?.qrDataUrl ? (
+                  <img
+                    src={configPreview.qrDataUrl}
+                    alt="WireGuard peer QR code"
+                    className="h-full w-full object-contain"
+                  />
+                ) : (
+                  <div className="text-center text-sm text-zinc-700">
+                    QR generation unavailable
+                  </div>
+                )}
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-500">
+                <p className="truncate text-zinc-300">{configPreview?.publicKey}</p>
+                <p className="mt-1">{configPreview?.filename}</p>
+              </div>
+            </div>
+            <Textarea
+              rows={18}
+              value={configPreview?.config ?? ''}
+              readOnly
+              className="font-mono text-xs"
+            />
           </DialogBody>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setCreatedConfig(null)}>
+          <DialogFooter className="flex-wrap">
+            <Button variant="ghost" onClick={() => setConfigPreview(null)}>
               Close
             </Button>
             <Button
-              onClick={async () => {
-                if (!createdConfig) return;
-                await navigator.clipboard.writeText(createdConfig);
-                toast.success('Config copied to clipboard');
+              variant="outline"
+              onClick={() => {
+                if (!configPreview) return;
+                downloadTextFile(configPreview.filename, configPreview.config);
+                toast.success('Peer config downloaded');
               }}
             >
+              <Download className="h-4 w-4" />
+              Config
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!configPreview?.qrDataUrl}
+              onClick={() => {
+                if (!configPreview?.qrDataUrl) return;
+                downloadDataUrl(getQrFilename(configPreview.filename), configPreview.qrDataUrl);
+                toast.success('QR downloaded');
+              }}
+            >
+              <QrCode className="h-4 w-4" />
+              QR
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!configPreview) return;
+                try {
+                  await navigator.clipboard.writeText(configPreview.config);
+                  toast.success('Config copied to clipboard');
+                } catch {
+                  toast.error('Clipboard unavailable');
+                }
+              }}
+            >
+              <Copy className="h-4 w-4" />
               Copy config
             </Button>
           </DialogFooter>

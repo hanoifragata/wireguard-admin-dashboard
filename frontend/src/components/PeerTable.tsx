@@ -5,7 +5,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Download, PencilLine, ShieldOff } from 'lucide-react';
+import { Download, PencilLine, QrCode, ShieldOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge.js';
 import { Button } from '@/components/ui/button.js';
 import type { GlobalPeer } from '@/lib/api.js';
@@ -17,6 +17,7 @@ interface PeerTableProps {
   onToggleAll: (checked: boolean) => void;
   onEditPeer: (peer: GlobalPeer) => void;
   onDownloadPeer: (peer: GlobalPeer) => void;
+  onShowPeerQr: (peer: GlobalPeer) => void;
   onRevokePeer: (peer: GlobalPeer) => void;
 }
 
@@ -43,6 +44,7 @@ export function PeerTable({
   onToggleAll,
   onEditPeer,
   onDownloadPeer,
+  onShowPeerQr,
   onRevokePeer,
 }: PeerTableProps) {
   const allSelected =
@@ -158,10 +160,16 @@ export function PeerTable({
               Edit
             </Button>
             {row.original.hasConfig ? (
-              <Button variant="ghost" size="sm" onClick={() => onDownloadPeer(row.original)}>
-                <Download className="h-4 w-4" />
-                Config
-              </Button>
+              <>
+                <Button variant="ghost" size="sm" onClick={() => onShowPeerQr(row.original)}>
+                  <QrCode className="h-4 w-4" />
+                  QR
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => onDownloadPeer(row.original)}>
+                  <Download className="h-4 w-4" />
+                  Config
+                </Button>
+              </>
             ) : null}
             <Button variant="ghost" size="sm" onClick={() => onRevokePeer(row.original)}>
               <ShieldOff className="h-4 w-4 text-red-400" />
@@ -171,7 +179,16 @@ export function PeerTable({
         ),
       }),
     ],
-    [allSelected, onDownloadPeer, onEditPeer, onRevokePeer, onToggleAll, onTogglePeer, selectedKeys]
+    [
+      allSelected,
+      onDownloadPeer,
+      onEditPeer,
+      onRevokePeer,
+      onShowPeerQr,
+      onToggleAll,
+      onTogglePeer,
+      selectedKeys,
+    ]
   );
 
   const table = useReactTable({

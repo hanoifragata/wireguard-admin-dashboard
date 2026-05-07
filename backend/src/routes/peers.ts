@@ -165,6 +165,7 @@ export async function peerRoutes(fastify: FastifyInstance): Promise<void> {
 
       const createdPeer = await createPeer(server, {
         allowedIps,
+        ...(body.data.alias ? { alias: body.data.alias } : {}),
         ...(body.data.persistentKeepalive !== undefined
           ? { persistentKeepalive: body.data.persistentKeepalive }
           : {}),
@@ -176,6 +177,7 @@ export async function peerRoutes(fastify: FastifyInstance): Promise<void> {
           serverId: server.id,
           publicKey: createdPeer.publicKey,
           clientConfig: encrypt(createdPeer.clientConfig),
+          remoteConfigPath: createdPeer.remoteConfigPath,
           ...(body.data.alias ? { alias: body.data.alias } : {}),
           ...(body.data.notes ? { notes: body.data.notes } : {}),
         })
@@ -456,7 +458,7 @@ export async function peerRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(500).send({ error: 'Peer update failed' });
     }
 
-    const { clientConfig, ...safeUpdated } = updated;
+    const { clientConfig, remoteConfigPath: _remoteConfigPath, ...safeUpdated } = updated;
     return {
       ...safeUpdated,
       serverName: null,
@@ -494,13 +496,35 @@ export async function peerRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     const serverMap = new Map(serverRows.map((s) => [s.id, s]));
+    const localPeerRows = db
+      .select({
+        serverId: peers.serverId,
+        publicKey: peers.publicKey,
+        alias: peers.alias,
+        username: peers.username,
+        remoteConfigPath: peers.remoteConfigPath,
+      })
+      .from(peers)
+      .where(inArray(peers.serverId, serverIds))
+      .all();
+    const localPeerMap = new Map(
+      localPeerRows.map((peer) => [`${peer.serverId}:${peer.publicKey}`, peer])
+    );
 
     // Build revocation targets with server objects
-    const revocationTargets = targets.map((t) => ({
-      server: serverMap.get(t.serverId)!,
-      publicKey: t.publicKey,
-      ...(t.alias ? { alias: t.alias } : {}),
-    }));
+    const revocationTargets = targets.map((t) => {
+      const localPeer = localPeerMap.get(`${t.serverId}:${t.publicKey}`);
+      const alias = t.alias ?? localPeer?.alias ?? localPeer?.username ?? undefined;
+
+      return {
+        server: serverMap.get(t.serverId)!,
+        publicKey: t.publicKey,
+        ...(alias ? { alias } : {}),
+        ...(localPeer?.remoteConfigPath
+          ? { remoteConfigPath: localPeer.remoteConfigPath }
+          : {}),
+      };
+    });
 
     const results = await bulkRevoke(revocationTargets, request.user.username);
 

@@ -51,6 +51,8 @@ export const peers = sqliteTable(
     username: text('username'),
     /** Encrypted client configuration for peers created from the dashboard */
     clientConfig: text('client_config'),
+    /** Managed remote directory where the generated client config was written */
+    remoteConfigPath: text('remote_config_path'),
     notes: text('notes'),
     createdAt: text('created_at')
       .notNull()
