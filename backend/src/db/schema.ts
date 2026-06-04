@@ -28,6 +28,8 @@ export const servers = sqliteTable('servers', {
   /** AES-256-GCM encrypted SSH password (base64) */
   sshPassword: text('ssh_password'),
   wgInterface: text('wg_interface').notNull().default('wg0'),
+  /** Discovered path to the WireGuard config file (e.g. /etc/wireguard/wg0.conf) */
+  wgConfigPath: text('wg_config_path'),
   description: text('description'),
   createdAt: text('created_at')
     .notNull()

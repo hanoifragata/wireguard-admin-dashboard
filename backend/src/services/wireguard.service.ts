@@ -115,6 +115,57 @@ function buildWireGuardCommand(server: Server, innerCommand: string): string {
   return innerCommand;
 }
 
+/**
+ * Probes the server (or Docker container) for the WireGuard config file,
+ * trying each known path in order, and returns the first one that exists.
+ * Stored on the Server record so it only needs to run once at server creation.
+ */
+export async function discoverWgConfigPath(server: Server, iface: string): Promise<string> {
+  const candidates = [
+    `/etc/wireguard/${iface}.conf`,       // standard + linuxserver/wireguard (symlinked)
+    `/config/wg_confs/${iface}.conf`,     // linuxserver/wireguard newer layout
+    `/config/${iface}.conf`,              // some custom images
+  ];
+
+  for (const path of candidates) {
+    const result = await execRemote(
+      server,
+      buildWireGuardCommand(server, `test -f ${shellEscape(path)} && echo found || echo missing`)
+    );
+    if (result.stdout.trim() === 'found') return path;
+  }
+
+  return candidates[0]!;
+}
+
+/**
+ * Reads the server's WireGuard config file and extracts its VPN IP address
+ * (the Address field in [Interface]) to use as DNS in generated client configs.
+ * Falls back to '1.1.1.1' if the address cannot be read or parsed.
+ */
+async function resolveServerDns(server: Server, iface: string): Promise<string> {
+  const configPath = server.wgConfigPath ?? `/etc/wireguard/${iface}.conf`;
+  const result = await execRemote(
+    server,
+    buildWireGuardCommand(server, `cat ${shellEscape(configPath)} 2>/dev/null || true`)
+  );
+
+  if (!result.stdout) return '1.1.1.1';
+
+  let inInterface = false;
+  for (const line of result.stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '[Interface]') { inInterface = true; continue; }
+    if (trimmed.startsWith('[')) { inInterface = false; continue; }
+    if (inInterface) {
+      const match = trimmed.match(/^Address\s*=\s*([\d.]+)/i);
+      if (match?.[1]) return match[1];
+    }
+  }
+
+  return '1.1.1.1';
+}
+
 // ─── Parsing ──────────────────────────────────────────────────────────────────
 
 /**
@@ -353,12 +404,16 @@ export async function createPeer(
     throw new Error(`Failed to add peer: ${addResult.stderr || 'unknown error'}`);
   }
 
-  const saveResult = await execRemote(
+  const configPath = server.wgConfigPath ?? `/etc/wireguard/${iface}.conf`;
+  const appendResult = await execRemote(
     server,
-    buildWireGuardCommand(server, `wg-quick save ${shellEscape(iface)}`)
+    buildWireGuardCommand(
+      server,
+      `printf '\\n[Peer]\\nPublicKey = %s\\nAllowedIPs = %s\\nPersistentKeepalive = %s\\n' ${shellEscape(publicKey)} ${shellEscape(input.allowedIps)} ${shellEscape(String(keepalive))} >> ${shellEscape(configPath)}`
+    )
   );
-  if (saveResult.exitCode !== 0) {
-    throw new Error(`Failed to persist peer: ${saveResult.stderr || 'unknown error'}`);
+  if (appendResult.exitCode !== 0) {
+    throw new Error(`Failed to persist peer to config: ${appendResult.stderr || 'unknown error'}`);
   }
 
   const verifyResult = await execRemote(
@@ -373,13 +428,14 @@ export async function createPeer(
     throw new Error('Peer creation verification failed');
   }
 
+  const dns = await resolveServerDns(server, iface);
   const serverPort =
     server.endpointPort ??
     (parseInt(serverPortResult.stdout, 10) || 51820);
   const clientConfig = `[Interface]
 PrivateKey = ${privateKey}
 Address = ${input.allowedIps}
-DNS = 1.1.1.1
+DNS = ${dns}
 
 [Peer]
 PublicKey = ${serverPublicKeyResult.stdout}

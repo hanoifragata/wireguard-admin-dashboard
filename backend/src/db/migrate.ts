@@ -52,6 +52,7 @@ function runInlineDDL(): void {
       ssh_key TEXT,
       ssh_password TEXT,
       wg_interface TEXT NOT NULL DEFAULT 'wg0',
+      wg_config_path TEXT,
       description TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     );
@@ -112,6 +113,7 @@ function runInlineDDL(): void {
   ensureColumn('servers', 'peer_limit', 'INTEGER');
   ensureColumn('peers', 'client_config', 'TEXT');
   ensureColumn('peers', 'remote_config_path', 'TEXT');
+  ensureColumn('servers', 'wg_config_path', 'TEXT');
   console.log('[DB] Inline DDL applied');
 }
 

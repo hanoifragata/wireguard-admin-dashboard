@@ -7,7 +7,7 @@ import { db } from '../db/index.js';
 import { servers, peers, type Server } from '../db/schema.js';
 import { encrypt } from '../lib/crypto.js';
 import { testConnection } from '../services/ssh.service.js';
-import { getLivePeers } from '../services/wireguard.service.js';
+import { getLivePeers, discoverWgConfigPath } from '../services/wireguard.service.js';
 import { auditService } from '../services/audit.service.js';
 import { eq } from 'drizzle-orm';
 import {
@@ -143,6 +143,7 @@ export async function serverRoutes(fastify: FastifyInstance): Promise<void> {
       sshKey: d.sshKey ? encrypt(d.sshKey) : null,
       sshPassword: d.sshPassword ? encrypt(d.sshPassword) : null,
       wgInterface: d.wgInterface,
+      wgConfigPath: null,
       description: d.description ?? null,
       createdAt: new Date().toISOString(),
     } satisfies Server;
@@ -160,6 +161,8 @@ export async function serverRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'SSH connection test failed', message: errorMessage });
     }
 
+    const wgConfigPath = await discoverWgConfigPath(transientServer, d.wgInterface).catch(() => null);
+
     const [inserted] = db
       .insert(servers)
       .values({
@@ -176,6 +179,7 @@ export async function serverRoutes(fastify: FastifyInstance): Promise<void> {
         sshKey: d.sshKey ? encrypt(d.sshKey) : null,
         sshPassword: d.sshPassword ? encrypt(d.sshPassword) : null,
         wgInterface: d.wgInterface,
+        wgConfigPath,
         description: d.description ?? null,
       })
       .returning()
@@ -248,6 +252,13 @@ export async function serverRoutes(fastify: FastifyInstance): Promise<void> {
     if (d.sshPassword !== undefined) updates.sshPassword = encrypt(d.sshPassword);
     if (d.wgInterface !== undefined) updates.wgInterface = d.wgInterface;
     if (d.description !== undefined) updates.description = d.description;
+
+    // Re-discover config path when connectivity-related fields change
+    const reconnectFields: (keyof typeof d)[] = ['executionMode', 'dockerContainer', 'wgInterface', 'host', 'port'];
+    if (reconnectFields.some((f) => d[f] !== undefined)) {
+      const iface = updates.wgInterface ?? existing.wgInterface;
+      updates.wgConfigPath = await discoverWgConfigPath(existing, iface).catch(() => null);
+    }
 
     const [updated] = db
       .update(servers)
@@ -328,6 +339,7 @@ export async function serverRoutes(fastify: FastifyInstance): Promise<void> {
       sshKey: d.sshKey ? encrypt(d.sshKey) : null,
       sshPassword: d.sshPassword ? encrypt(d.sshPassword) : null,
       wgInterface: 'wg0',
+      wgConfigPath: null,
       description: null,
       createdAt: new Date().toISOString(),
     } satisfies Server;
@@ -361,13 +373,20 @@ export async function serverRoutes(fastify: FastifyInstance): Promise<void> {
 
     try {
       await testConnection(server);
+
+      // Re-discover WireGuard config path and persist it if found
+      const wgConfigPath = await discoverWgConfigPath(server, server.wgInterface).catch(() => null);
+      if (wgConfigPath) {
+        db.update(servers).set({ wgConfigPath }).where(eq(servers.id, id)).run();
+      }
+
       await auditService.log({
         action: 'SSH_TEST',
         serverId: id,
         performedBy: request.user.username,
         result: 'success',
       });
-      return { success: true, message: 'SSH connection successful' };
+      return { success: true, message: 'SSH connection successful', wgConfigPath };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Connection failed';
       await auditService.log({
